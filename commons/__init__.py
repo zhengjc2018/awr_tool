@@ -1,0 +1,1 @@
+# define the common methods or class instance for global use

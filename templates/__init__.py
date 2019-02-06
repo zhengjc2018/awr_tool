@@ -1,0 +1,1 @@
+# define the jinja2 templates used to get specific string
