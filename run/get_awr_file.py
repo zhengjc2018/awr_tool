@@ -1,8 +1,9 @@
 import os
 from flask import current_app
 from pyecharts import Line
-from app.commons import DownloadZip, DelExpiredFile
+from app.commons import DownloadZip
 from app.models import AwrHistory
+from app.servers.rules import DelExpiredFile
 
 
 #  get the data from sql and save as raw awr report
@@ -30,7 +31,7 @@ class FileOperation(object):
             for file in files:
                 os.remove(file)
         except Exception as e:
-                current_app.logger.err('delete expired zip err:%s' % str(e))
+            current_app.logger.err('delete expired zip err:%s' % str(e))
 
     def check_file_exist(self, file_name):
         awr_html = os.path.join(self.base_loca, file_name)

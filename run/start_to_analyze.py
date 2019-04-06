@@ -4,6 +4,7 @@ from flask import render_template
 from .get_parse_data import AnalyzeBase
 from .get_awr_file import FileOperation
 from .data_serialize import CommonMethod
+from .recommend_params import RECOMMEND
 from app.models import AwrHistory, Hosts
 from app.commons import TimeFormat
 from app.extensions import db
@@ -32,6 +33,12 @@ class DbInstInfo(AnalyzeBase):
         return True, self.text, dict(zip(title, data))
 
 
+class PdbInfo(AnalyzeBase):
+    def parse(self, soup):
+        *self.text, _ = super().parse(soup, '39')
+        return self.text
+
+
 class HostInfo(AnalyzeBase):
     def parse(self, soup):
         *self.text, _ = super().parse(soup, '2')
@@ -40,8 +47,14 @@ class HostInfo(AnalyzeBase):
 
 class SnapshotInfo(AnalyzeBase):
     def parse(self, soup):
-        *self.text, _ = super().parse(soup, '3')
-        return self.text
+        st, dt, ti = super().parse(soup, '3')
+        if not st:
+            return False, None, None
+        title = "| " + " | ".join([i if i else " " for i in ti]) + " |\n"
+        flag = "| " + "--- | "*len(ti) + "\n"
+        data = "".join(["| " + "|".join(i) + " |\n" for i in dt])
+
+        return True, dt, "".join([title, flag, data])
 
 
 class SystemStatTime(AnalyzeBase):
@@ -332,6 +345,13 @@ class KeyInstActivityStat(AnalyzeBase):
         return self.text
 
 
+class InstActivityStat(AnalyzeBase):
+    def parse(self, soup):
+        *data, _ = super().parse(soup, '40')
+        self.text = CommonMethod.dict_two_colums(data, [0, 1], True)
+        return self.text
+
+
 class SegRowLockWaits(AnalyzeBase):
     def parse(self, soup, keep_rows):
         return do_sth(super().parse, soup, '33', keep_rows)
@@ -374,57 +394,48 @@ class BufferPoolStat(AnalyzeBase):
         return CommonMethod.dict_two_colums(data, [0, 1], True)
 
 
+def choose_template(soup):
+    st, _, dt = DbInstInfo().parse(soup)
+    st2, _, tx = SnapshotInfo().parse(soup)
+    if not st or not st2:
+        raise Exception('DB Info get error')
+    cdb = dt.get('CDB')
+    rel = dt.get('Release')
+
+    if (cdb and cdb.upper() == 'YES') or ("CDB" in tx and 'YES' in tx):
+        f_key = 'cdb'
+        template = 'awr_rt_cdb.md'
+        if re.match(r'12\.1.', rel):
+            s_key = '12.1'
+        else:
+            s_key = '12.2'
+    else:
+        template = 'awr_rt.md'
+        f_key = 'normal'
+        if re.match(r'12\.1.', rel):
+            s_key = '12.1'
+        elif re.match(r'11\.0.', rel):
+            s_key = '11.4'
+        else:
+            s_key = '12.2'
+    return template, RECOMMEND[f_key][s_key]
+
+
 def GetMarkdownStr(history_id):
     db.session.rollback()
 
+    awr_hy = AwrHistory.query.get(history_id)
+    host_id = awr_hy.host_id
     soup = AnalyzeBase.get_soup(history_id)
-    awr_history = AwrHistory.query.get(history_id)
-    host_id = awr_history.host_id
-    host = Hosts.query.get(host_id)
-    date = TimeFormat.timestp2date(awr_history.finish_at)
+    template, dt = choose_template(soup)
 
-    string = render_template('awr_rt.md', soup=soup, host=host, date=date,
-                             all=all, any=any, int=CommonMethod.int,
-                             re_sub=CommonMethod.re_sub_unneed,
-                             get_fix_info=CommonMethod.merge_info_from_tables,
+    string = render_template(template,
+                             all=all, any=any, soup=soup,
+                             host=Hosts.query.get(host_id),
+                             wanted_dict=dt,
+                             date=TimeFormat.timestp2date(awr_hy.finish_at),
+                             CommonMethod=CommonMethod,
                              FileFunc=FileOperation(history_id),
-                             BackgroundWaitEvent=BackgroundWaitEvent(),
-                             BufferPoolAdv=BufferPoolAdv(),
-                             BufferPoolStat=BufferPoolStat(),
-                             DbInstInfo=DbInstInfo(),
-                             DynamicRemastering=DynamicRemastering(),
-                             FileIOStat=FileIOStat(),
-                             ForegroundWaitEvent=ForegroundWaitEvent(),
-                             HostInfo=HostInfo(),
-                             InitOraParam=InitOraParam(),
-                             InstEfficiencyPer=InstEfficiencyPer(),
-                             IoProfile=IoProfile(),
-                             GCEnqueueService=GCEnqueueService(),
-                             GlobalCacheLoadProfile=GlobalCacheLoadProfile(),
-                             KeyInstActivityStat=KeyInstActivityStat(),
-                             LoadProfile=LoadProfile(),
-                             MemDynamicStat=MemDynamicStat(),
-                             MemoryStat=MemoryStat(),
-                             PgaMemAdv=PgaMemAdv(),
-                             PGATarget=PGATarget(),
-                             PingLatencyStats=PingLatencyStats(),
-                             SegmentsBufferBusy=SegmentsBufferBusy(),
-                             SegmentsDirectReads=SegmentsDirectReads(),
-                             SegmentsLogReads=SegmentsLogReads(),
-                             SegmentsPhyReads=SegmentsPhyReads(),
-                             SegRowLockWaits=SegRowLockWaits(),
-                             SgaTargetAdv=SgaTargetAdv(),
-                             SharePoolAdv=SharePoolAdv(),
-                             SnapshotInfo=SnapshotInfo(),
-                             SqlCpuTime=SqlCpuTime(),
-                             SqlElapsedTime=SqlElapsedTime(),
-                             SqlExecutions=SqlExecutions(),
-                             SqlGets=SqlGets(),
-                             SqlParseCall=SqlParseCall(),
-                             SqlPhyReads=SqlPhyReads(),
-                             SqlVersionCount=SqlVersionCount(),
-                             SystemStatTime=SystemStatTime(),
-                             TimeModelStat=TimeModelStat(),
-                             TotalWaitTime=TotalWaitTime())
+                             kw=globals())
 
     return string
